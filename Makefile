@@ -40,7 +40,12 @@ ASFLAGS = $(CFLAGS)
 
 LIBDIR =
 LDFLAGS =
-LIBS = -lintrafont -lpspgum -lpspgu -lm -lpspwlan -lpspnet_apctl -lpspnet_resolver -lpsputility -lpspnet_inet -lpspnet -lpsprtc -lpspsdk
+# Do NOT repeat -lpspnet / -lpspnet_apctl / -lpspdebug / -lpspdisplay / -lpspge /
+# -lpspctrl here: build.mak appends them after this list. Listing a stub library
+# twice splits its .lib.stub section, which makes psp-fixup-imports warn
+# "stubs out of order" and skip merging that library's import entries.
+LIBS = -lintrafont -lpspgum -lpspgu -lm -lpspwlan -lpspnet_resolver \
+       -lpspnet_inet -lpsputility -lpsppower -lpsprtc -lpspsdk
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = PSP Bitcoin Wallet

@@ -2,11 +2,33 @@
 #define HTTP_H
 
 #include <stdint.h>
+#include <stddef.h>
 
-// Generic HTTPS request function using mbedTLS and PSP sockets
-int https_request(const char *method, const char *host, const char *path, const char *body, char *response_buf, size_t response_max);
+/*
+ * https_request() / fetch_bitcoin_balance() error codes.
+ * A non-2xx HTTP status is reported as -(1000 + status), e.g. -1404.
+ */
+#define HTTP_ERR_ARGS           -1
+#define HTTP_ERR_RESOLVER       -2
+#define HTTP_ERR_DNS            -3
+#define HTTP_ERR_SOCKET         -4
+#define HTTP_ERR_CONNECT        -5
+#define HTTP_ERR_TLS_SETUP      -6
+#define HTTP_ERR_TLS_HANDSHAKE  -7
+#define HTTP_ERR_WRITE          -8
+#define HTTP_ERR_EMPTY          -9
+#define HTTP_ERR_BAD_RESPONSE  -10
+#define HTTP_ERR_PARSE         -11
+#define HTTP_ERR_TIMEOUT       -12
 
-// Connects to WiFi, establishes a TLS connection to mempool.space, and fetches the balance in satoshis
+/* Human readable form of the codes above, for on-screen diagnostics. */
+const char *http_strerror(int err);
+
+/* Generic HTTPS request using mbedTLS over PSP sockets. 0 on success. */
+int https_request(const char *method, const char *host, const char *path,
+                  const char *body, char *response_buf, size_t response_max);
+
+/* Fetches the confirmed balance in satoshis from mempool.space. 0 on success. */
 int fetch_bitcoin_balance(const char *address, int is_testnet, uint64_t *balance_sats);
 
 #endif
