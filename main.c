@@ -94,38 +94,59 @@ int main(int argc, char** argv) {
         }
     }
 
-    while(1) {
-        startFrame();
-        clearScreen(0xFF1E1E1E); // Dark gray background
+void draw_full_ui(const char* mnemonic, const char* btc_address, const char* balance_str, const char* tx_status, int is_testnet) {
+    startFrame();
+    clearScreen(0xFF1E1E1E);
 
-        if (font) {
-            intraFontSetStyle(font, 1.0f, 0xFFFFFFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 40, "PSP Bitcoin Wallet");
+    if (font) {
+        intraFontSetStyle(font, 1.0f, 0xFFFFFFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 40, "PSP Bitcoin Wallet");
 
-            intraFontSetStyle(font, 0.7f, 0xFF00FF00, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 80, "Mnemonic:");
-            
-            intraFontSetStyle(font, 0.6f, 0xFFDDDDDD, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 110, "%s", mnemonic);
-
-            intraFontSetStyle(font, 0.7f, is_testnet ? 0xFF00AAFF : 0xFF00FF00, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 150, "Address (%s):", is_testnet ? "TESTNET" : "MAINNET");
-            
-            intraFontSetStyle(font, 0.8f, 0xFFFFFFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 180, "%s", btc_address);
-
-            intraFontSetStyle(font, 0.7f, 0xFF00FFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 220, "%s", balance_str);
-
-            intraFontSetStyle(font, 0.7f, 0xFFFFAA00, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 245, "%s", tx_status);
-
-            intraFontSetStyle(font, 0.6f, 0xFFAAAAAA, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 255, "[X] Gen   [SQUARE] Bal   [TRIANGLE] Sweep");
-            intraFontPrintf(font, 20, 270, "[L/R] Toggle Testnet     [START] Exit");
+        intraFontSetStyle(font, 0.7f, 0xFF00FF00, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 80, "Mnemonic:");
+        
+        intraFontSetStyle(font, 0.6f, 0xFFDDDDDD, 0, 0, INTRAFONT_ALIGN_LEFT);
+        char formatted_mnemonic[256] = "";
+        if (strlen(mnemonic) > 10 && strncmp(mnemonic, "Press", 5) != 0) {
+            int spaces = 0;
+            int j = 0;
+            for (int i = 0; mnemonic[i] != '\0'; i++) {
+                if (mnemonic[i] == ' ') {
+                    spaces++;
+                    if (spaces == 4 || spaces == 8) {
+                        formatted_mnemonic[j++] = '\n';
+                        continue;
+                    }
+                }
+                formatted_mnemonic[j++] = mnemonic[i];
+            }
+            formatted_mnemonic[j] = '\0';
+        } else {
+            strcpy(formatted_mnemonic, mnemonic);
         }
+        intraFontPrintf(font, 20, 110, "%s", formatted_mnemonic);
 
-        endFrame();
+        intraFontSetStyle(font, 0.7f, is_testnet ? 0xFF00AAFF : 0xFF00FF00, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 160, "Address (%s):", is_testnet ? "TESTNET" : "MAINNET");
+        
+        intraFontSetStyle(font, 0.8f, 0xFFFFFFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 190, "%s", btc_address);
+
+        intraFontSetStyle(font, 0.7f, 0xFF00FFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 220, "%s", balance_str);
+
+        intraFontSetStyle(font, 0.7f, 0xFFFFAA00, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 245, "%s", tx_status);
+
+        intraFontSetStyle(font, 0.6f, 0xFFAAAAAA, 0, 0, INTRAFONT_ALIGN_LEFT);
+        intraFontPrintf(font, 20, 255, "[X] Gen   [SQUARE] Bal   [TRIANGLE] Sweep");
+        intraFontPrintf(font, 20, 270, "[L/R] Toggle Testnet     [START] Exit");
+    }
+    endFrame();
+}
+
+    while(1) {
+        draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
 
         SceCtrlData pad;
         sceCtrlReadBufferPositive(&pad, 1);
@@ -193,17 +214,25 @@ int main(int argc, char** argv) {
         if (btnDown & PSP_CTRL_SQUARE) {
             if (strlen(btc_address) > 0) {
                 if (!wifi_connected) {
-                    snprintf(balance_str, sizeof(balance_str), "Connecting to WiFi (Scanning Profiles)...");
-                    startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 220, "%s", balance_str); endFrame();
+                    snprintf(balance_str, sizeof(balance_str), "Connecting to WiFi (Slot 1)...");
+                    draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
 
-                    if (init_networking() == 0 && connect_to_ap() == 0) {
-                        wifi_connected = 1;
+                    int init_ret = init_networking();
+                    if (init_ret == 0) {
+                        int conn_ret = connect_to_ap();
+                        if (conn_ret == 0) {
+                            wifi_connected = 1;
+                        } else {
+                            snprintf(balance_str, sizeof(balance_str), "Error: AP Connect Failed (%d)", conn_ret);
+                        }
+                    } else {
+                        snprintf(balance_str, sizeof(balance_str), "Error: Net Init Failed (%d)", init_ret);
                     }
                 }
 
                 if (wifi_connected) {
                     snprintf(balance_str, sizeof(balance_str), "Fetching balance from mempool.space...");
-                    startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 220, "%s", balance_str); endFrame();
+                    draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
 
                     uint64_t sats = 0;
                     int ret = fetch_bitcoin_balance(btc_address, is_testnet, &sats);
@@ -212,23 +241,32 @@ int main(int argc, char** argv) {
                     } else {
                         snprintf(balance_str, sizeof(balance_str), "Error: HTTP fetch failed (%d)", ret);
                     }
-                } else {
-                    snprintf(balance_str, sizeof(balance_str), "Error: WiFi connection failed.");
+                    }
                 }
-            }
         }
 
         if (btnDown & PSP_CTRL_TRIANGLE) {
             if (has_node && strlen(btc_address) > 0) {
                 if (!wifi_connected) {
-                    snprintf(tx_status, sizeof(tx_status), "Connecting to WiFi...");
-                    startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 245, "%s", tx_status); endFrame();
-                    if (init_networking() == 0 && connect_to_ap() == 0) wifi_connected = 1;
+                    snprintf(tx_status, sizeof(tx_status), "Connecting to WiFi (Slot 1)...");
+                    draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
+                    
+                    int init_ret = init_networking();
+                    if (init_ret == 0) {
+                        int conn_ret = connect_to_ap();
+                        if (conn_ret == 0) {
+                            wifi_connected = 1;
+                        } else {
+                            snprintf(tx_status, sizeof(tx_status), "Error: AP Connect Failed (%d)", conn_ret);
+                        }
+                    } else {
+                        snprintf(tx_status, sizeof(tx_status), "Error: Net Init Failed (%d)", init_ret);
+                    }
                 }
 
                 if (wifi_connected) {
                     snprintf(tx_status, sizeof(tx_status), "Building & Broadcasting Tx (Sweep to self)...");
-                    startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 245, "%s", tx_status); endFrame();
+                    draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
 
                     char txid[70];
                     int ret = send_bitcoin(&global_node, btc_address, btc_address, 0, is_testnet, txid, sizeof(txid));
@@ -239,10 +277,8 @@ int main(int argc, char** argv) {
                     } else {
                         snprintf(tx_status, sizeof(tx_status), "Error broadcasting (%d)", ret);
                     }
-                } else {
-                    snprintf(tx_status, sizeof(tx_status), "WiFi failed");
+                    }
                 }
-            }
         }
         
         sceKernelDelayThread(10000); // 10ms delay to avoid CPU hogging
