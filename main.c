@@ -11,6 +11,7 @@
 #include "intraFont.h"
 #include "bip39.h"
 #include "bip32.h"
+#include <fcntl.h>
 #include "address.h"
 #include "curves.h"
 #include "rand.h"
@@ -61,6 +62,37 @@ int main(int argc, char** argv) {
     int wifi_connected = 0;
     HDNode global_node;
     int has_node = 0;
+    int is_testnet = 0;
+    
+    // Attempt to load mnemonic from Memory Stick
+    SceUID fd = sceIoOpen("ms0:/psp-wallet-seed.txt", PSP_O_RDONLY, 0777);
+    if (fd >= 0) {
+        memset(mnemonic, 0, sizeof(mnemonic));
+        sceIoRead(fd, mnemonic, sizeof(mnemonic)-1);
+        sceIoClose(fd);
+        
+        // Strip newlines if any
+        char *newline = strchr(mnemonic, '\n');
+        if (newline) *newline = '\0';
+        newline = strchr(mnemonic, '\r');
+        if (newline) *newline = '\0';
+        
+        if (strlen(mnemonic) > 10) {
+            uint8_t seed[64];
+            mnemonic_to_seed(mnemonic, "", seed, 0);
+            hdnode_from_seed(seed, 64, SECP256K1_NAME, &global_node);
+            
+            hdnode_private_ckd(&global_node, 44 | 0x80000000);
+            hdnode_private_ckd(&global_node, (is_testnet ? 1 : 0) | 0x80000000);
+            hdnode_private_ckd(&global_node, 0 | 0x80000000);
+            hdnode_private_ckd(&global_node, 0);
+            hdnode_private_ckd(&global_node, 0);
+            hdnode_fill_public_key(&global_node);
+            has_node = 1;
+            
+            ecdsa_get_address(global_node.public_key, is_testnet ? 0x6F : 0x00, HASHER_SHA2_RIPEMD, HASHER_SHA2D, btc_address, sizeof(btc_address));
+        }
+    }
 
     while(1) {
         startFrame();
@@ -76,8 +108,8 @@ int main(int argc, char** argv) {
             intraFontSetStyle(font, 0.6f, 0xFFDDDDDD, 0, 0, INTRAFONT_ALIGN_LEFT);
             intraFontPrintf(font, 20, 110, "%s", mnemonic);
 
-            intraFontSetStyle(font, 0.7f, 0xFF00FF00, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 150, "Address:");
+            intraFontSetStyle(font, 0.7f, is_testnet ? 0xFF00AAFF : 0xFF00FF00, 0, 0, INTRAFONT_ALIGN_LEFT);
+            intraFontPrintf(font, 20, 150, "Address (%s):", is_testnet ? "TESTNET" : "MAINNET");
             
             intraFontSetStyle(font, 0.8f, 0xFFFFFFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
             intraFontPrintf(font, 20, 180, "%s", btc_address);
@@ -89,7 +121,8 @@ int main(int argc, char** argv) {
             intraFontPrintf(font, 20, 245, "%s", tx_status);
 
             intraFontSetStyle(font, 0.6f, 0xFFAAAAAA, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 265, "[X] Gen   [SQUARE] Bal   [TRIANGLE] Sweep   [START] Exit");
+            intraFontPrintf(font, 20, 255, "[X] Gen   [SQUARE] Bal   [TRIANGLE] Sweep");
+            intraFontPrintf(font, 20, 270, "[L/R] Toggle Testnet     [START] Exit");
         }
 
         endFrame();
@@ -105,30 +138,53 @@ int main(int argc, char** argv) {
             break;
         }
         if (btnDown & PSP_CTRL_CROSS) {
-            // Generate 16 bytes of entropy (128 bits = 12 words)
             uint8_t data[16];
             random_buffer(data, 16);
             const char* generated = mnemonic_from_data(data, 16);
             if (generated) {
                 strncpy(mnemonic, generated, sizeof(mnemonic)-1);
+                
+                // Save to ms0:/psp-wallet-seed.txt
+                SceUID fd = sceIoOpen("ms0:/psp-wallet-seed.txt", PSP_O_WRONLY | PSP_O_CREAT | PSP_O_TRUNC, 0777);
+                if (fd >= 0) {
+                    sceIoWrite(fd, mnemonic, strlen(mnemonic));
+                    sceIoClose(fd);
+                }
 
-                // 1. Convert mnemonic to 64-byte seed
                 uint8_t seed[64];
                 mnemonic_to_seed(mnemonic, "", seed, 0);
 
-                // 2. Initialize HD node from seed
                 hdnode_from_seed(seed, 64, SECP256K1_NAME, &global_node);
 
-                // 3. Derive BIP44 path for Bitcoin: m/44'/0'/0'/0/0
                 hdnode_private_ckd(&global_node, 44 | 0x80000000);
-                hdnode_private_ckd(&global_node, 0 | 0x80000000);
+                hdnode_private_ckd(&global_node, (is_testnet ? 1 : 0) | 0x80000000);
                 hdnode_private_ckd(&global_node, 0 | 0x80000000);
                 hdnode_private_ckd(&global_node, 0);
                 hdnode_private_ckd(&global_node, 0);
                 hdnode_fill_public_key(&global_node);
                 has_node = 1;
 
-                ecdsa_get_address(global_node.public_key, 0x00, HASHER_SHA2_RIPEMD, HASHER_SHA2D, btc_address, sizeof(btc_address));
+                ecdsa_get_address(global_node.public_key, is_testnet ? 0x6F : 0x00, HASHER_SHA2_RIPEMD, HASHER_SHA2D, btc_address, sizeof(btc_address));
+                snprintf(balance_str, sizeof(balance_str), "Balance: Press [SQUARE] to check");
+                tx_status[0] = '\0';
+            }
+        }
+        
+        if (btnDown & PSP_CTRL_LTRIGGER || btnDown & PSP_CTRL_RTRIGGER) {
+            is_testnet = !is_testnet;
+            if (has_node) {
+                // Re-derive address for the new network
+                uint8_t seed[64];
+                mnemonic_to_seed(mnemonic, "", seed, 0);
+                hdnode_from_seed(seed, 64, SECP256K1_NAME, &global_node);
+                hdnode_private_ckd(&global_node, 44 | 0x80000000);
+                hdnode_private_ckd(&global_node, (is_testnet ? 1 : 0) | 0x80000000);
+                hdnode_private_ckd(&global_node, 0 | 0x80000000);
+                hdnode_private_ckd(&global_node, 0);
+                hdnode_private_ckd(&global_node, 0);
+                hdnode_fill_public_key(&global_node);
+                
+                ecdsa_get_address(global_node.public_key, is_testnet ? 0x6F : 0x00, HASHER_SHA2_RIPEMD, HASHER_SHA2D, btc_address, sizeof(btc_address));
                 snprintf(balance_str, sizeof(balance_str), "Balance: Press [SQUARE] to check");
                 tx_status[0] = '\0';
             }
@@ -137,11 +193,10 @@ int main(int argc, char** argv) {
         if (btnDown & PSP_CTRL_SQUARE) {
             if (strlen(btc_address) > 0) {
                 if (!wifi_connected) {
-                    snprintf(balance_str, sizeof(balance_str), "Connecting to WiFi (Profile 1)...");
-                    // Force a screen update to show connecting status
+                    snprintf(balance_str, sizeof(balance_str), "Connecting to WiFi (Scanning Profiles)...");
                     startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 220, "%s", balance_str); endFrame();
 
-                    if (init_networking() == 0 && connect_to_ap(1) == 0) {
+                    if (init_networking() == 0 && connect_to_ap() == 0) {
                         wifi_connected = 1;
                     }
                 }
@@ -151,14 +206,14 @@ int main(int argc, char** argv) {
                     startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 220, "%s", balance_str); endFrame();
 
                     uint64_t sats = 0;
-                    int ret = fetch_bitcoin_balance(btc_address, &sats);
+                    int ret = fetch_bitcoin_balance(btc_address, is_testnet, &sats);
                     if (ret == 0) {
                         snprintf(balance_str, sizeof(balance_str), "Balance: %llu satoshis", (unsigned long long)sats);
                     } else {
                         snprintf(balance_str, sizeof(balance_str), "Error: HTTP fetch failed (%d)", ret);
                     }
                 } else {
-                    snprintf(balance_str, sizeof(balance_str), "Error: WiFi connection failed. Check Profile 1.");
+                    snprintf(balance_str, sizeof(balance_str), "Error: WiFi connection failed.");
                 }
             }
         }
@@ -168,7 +223,7 @@ int main(int argc, char** argv) {
                 if (!wifi_connected) {
                     snprintf(tx_status, sizeof(tx_status), "Connecting to WiFi...");
                     startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 245, "%s", tx_status); endFrame();
-                    if (init_networking() == 0 && connect_to_ap(1) == 0) wifi_connected = 1;
+                    if (init_networking() == 0 && connect_to_ap() == 0) wifi_connected = 1;
                 }
 
                 if (wifi_connected) {
@@ -176,7 +231,7 @@ int main(int argc, char** argv) {
                     startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 245, "%s", tx_status); endFrame();
 
                     char txid[70];
-                    int ret = send_bitcoin(&global_node, btc_address, btc_address, 0, txid, sizeof(txid));
+                    int ret = send_bitcoin(&global_node, btc_address, btc_address, 0, is_testnet, txid, sizeof(txid));
                     if (ret == 0) {
                         snprintf(tx_status, sizeof(tx_status), "Sent! TXID: %.15s...", txid);
                     } else if (ret == -5) {
