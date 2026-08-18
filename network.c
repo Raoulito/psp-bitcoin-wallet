@@ -18,48 +18,48 @@
 #include "graphics.h"
 
 int init_networking(void) {
-    // The PSP Netconf Utility handles all memory initialization automatically!
-    // Manually calling sceNetInit here causes a double-allocation kernel panic.
+    static int initialized = 0;
+    if (initialized) return 0;
+    
+    sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
+    sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
+
+    sceNetInit(128 * 1024, 42, 4 * 1024, 42, 4 * 1024);
+    sceNetInetInit();
+    sceNetResolverInit();
+    sceNetApctlInit(0x8000, 48);
+
+    initialized = 1;
     return 0;
 }
 
 int connect_to_ap(void) {
-    pspUtilityNetconfData data;
-    memset(&data, 0, sizeof(data));
-    data.base.size = sizeof(data);
-    data.base.language = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
-    data.base.buttonSwap = PSP_UTILITY_ACCEPT_CROSS;
-    data.base.graphicsThread = 17;
-    data.base.accessThread = 19;
-    data.base.fontThread = 18;
-    data.base.soundThread = 16;
-    data.action = PSP_NETCONF_ACTION_CONNECTAP;
+    int state = 0;
     
-    struct pspUtilityNetconfAdhoc adhocparam;
-    memset(&adhocparam, 0, sizeof(adhocparam));
-    data.adhocparam = &adhocparam;
-
-    if (sceUtilityNetconfInitStart(&data) != 0) return -1;
-
-    int running = 1;
-    while (running) {
-        int status = sceUtilityNetconfGetStatus();
-        
-        if (status == PSP_UTILITY_DIALOG_NONE) {
-            running = 0;
-        } else if (status == PSP_UTILITY_DIALOG_VISIBLE) {
-            // Mode 2 lets the firmware handle the graphics completely!
-            sceUtilityNetconfUpdate(2); 
-        } else if (status == PSP_UTILITY_DIALOG_QUIT) {
-            sceUtilityNetconfShutdownStart();
-        }
-        
-        sceDisplayWaitVblankStart();
+    int err = sceNetApctlConnect(1);
+    if (err != 0) {
+        return err;
     }
 
-    int state = 0;
-    sceNetApctlGetState(&state);
-    return (state == 4) ? 0 : -2;
+    // Wait for the connection to establish (max 30 seconds)
+    int timeout = 60; 
+    while (timeout > 0) {
+        if (sceNetApctlGetState(&state) != 0) return -3;
+        
+        if (state == 4) { // PSP_NET_APCTL_STATE_GOT_IP
+            return 0;
+        }
+        
+        // If state == 0 (disconnected) after we started connecting, it failed the handshake
+        if (state == 0 && timeout < 55) {
+            return -100;
+        }
+        
+        sceKernelDelayThread(500 * 1000); // Wait 500ms
+        timeout--;
+    }
+
+    return -200 - state; // Timeout, return state
 }
 
 void terminate_networking(void) {
