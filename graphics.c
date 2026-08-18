@@ -35,11 +35,19 @@ void startFrame() {
     sceGuStart(GU_DIRECT, list);
 }
 
-void endFrame() {
+void endFrame_noSwap() {
     sceGuFinish();
     sceGuSync(0,0);
+}
+
+void swapBuffers() {
     sceDisplayWaitVblankStart();
     sceGuSwapBuffers();
+}
+
+void endFrame() {
+    endFrame_noSwap();
+    swapBuffers();
 }
 
 void clearScreen(u32 color) {

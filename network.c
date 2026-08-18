@@ -35,32 +35,51 @@ int init_networking(void) {
 }
 
 int connect_to_ap(void) {
-    int state = 0;
+    pspUtilityNetconfData data;
+    memset(&data, 0, sizeof(data));
+    data.base.size = sizeof(data);
+    data.base.language = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
+    data.base.buttonSwap = PSP_UTILITY_ACCEPT_CROSS;
+    data.base.graphicsThread = 17;
+    data.base.accessThread = 19;
+    data.base.fontThread = 18;
+    data.base.soundThread = 16;
+    data.action = PSP_NETCONF_ACTION_CONNECTAP;
     
-    int err = sceNetApctlConnect(1);
-    if (err != 0) {
-        return err;
+    struct pspUtilityNetconfAdhoc adhocparam;
+    memset(&adhocparam, 0, sizeof(adhocparam));
+    data.adhocparam = &adhocparam;
+
+    if (sceUtilityNetconfInitStart(&data) != 0) return -1;
+
+    int running = 1;
+    while (running) {
+        startFrame();
+        clearScreen(0xFF1E1E1E);
+        endFrame_noSwap(); // Finish the GU list but DO NOT swap buffers yet!
+
+        int status = sceUtilityNetconfGetStatus();
+        
+        switch (status) {
+            case PSP_UTILITY_DIALOG_NONE:
+                running = 0;
+                break;
+            case PSP_UTILITY_DIALOG_VISIBLE:
+                sceUtilityNetconfUpdate(1); // Draws the dialog directly to the framebuffer
+                break;
+            case PSP_UTILITY_DIALOG_QUIT:
+                sceUtilityNetconfShutdownStart();
+                break;
+            case PSP_UTILITY_DIALOG_FINISHED:
+                break;
+        }
+
+        swapBuffers(); // Wait for Vblank and swap
     }
 
-    // Wait for the connection to establish (max 30 seconds)
-    int timeout = 60; 
-    while (timeout > 0) {
-        if (sceNetApctlGetState(&state) != 0) return -3;
-        
-        if (state == 4) { // PSP_NET_APCTL_STATE_GOT_IP
-            return 0;
-        }
-        
-        // If state == 0 (disconnected) after we started connecting, it failed the handshake
-        if (state == 0 && timeout < 55) {
-            return -100;
-        }
-        
-        sceKernelDelayThread(500 * 1000); // Wait 500ms
-        timeout--;
-    }
-
-    return -200 - state; // Timeout, return state
+    int state = 0;
+    sceNetApctlGetState(&state);
+    return (state == 4) ? 0 : -2;
 }
 
 void terminate_networking(void) {

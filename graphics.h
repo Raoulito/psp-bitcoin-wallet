@@ -9,6 +9,8 @@
 
 void initGraphics();
 void startFrame();
+void endFrame_noSwap();
+void swapBuffers();
 void endFrame();
 void clearScreen(u32 color);
 
