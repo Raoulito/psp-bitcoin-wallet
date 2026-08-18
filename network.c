@@ -62,7 +62,7 @@ int connect_to_ap(void) {
         
         switch (status) {
             case PSP_UTILITY_DIALOG_NONE:
-                running = 0;
+                // Do nothing, dialog is initializing or fully closed
                 break;
             case PSP_UTILITY_DIALOG_VISIBLE:
                 sceUtilityNetconfUpdate(1); // Draws the dialog directly to the framebuffer
@@ -71,6 +71,7 @@ int connect_to_ap(void) {
                 sceUtilityNetconfShutdownStart();
                 break;
             case PSP_UTILITY_DIALOG_FINISHED:
+                running = 0; // The dialog has completely finished
                 break;
         }
 
