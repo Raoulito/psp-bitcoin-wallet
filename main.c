@@ -221,7 +221,30 @@ void draw_full_ui(const char* mnemonic, const char* btc_address, const char* bal
                     if (init_ret == 0) {
                         int conn_ret = connect_to_ap();
                         if (conn_ret == 0) {
-                            wifi_connected = 1;
+                            int timeout = 60; // 30 seconds
+                            int state = 0;
+                            while (timeout > 0) {
+                                sceNetApctlGetState(&state);
+                                if (state == 4) { // GOT_IP
+                                    wifi_connected = 1;
+                                    break;
+                                }
+                                if (state == 0 && timeout < 55) { // Disconnected / Handshake failed
+                                    conn_ret = -100;
+                                    break;
+                                }
+                                
+                                snprintf(balance_str, sizeof(balance_str), "Connecting to WiFi (Slot 1)... %d sec", timeout / 2);
+                                draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
+                                
+                                sceKernelDelayThread(500 * 1000); // 500ms
+                                timeout--;
+                            }
+                            if (timeout == 0) conn_ret = -200 - state; // Timeout
+                        }
+                        
+                        if (wifi_connected) {
+                            snprintf(balance_str, sizeof(balance_str), "WiFi Connected! (Slot 1)");
                         } else {
                             snprintf(balance_str, sizeof(balance_str), "Error: AP Connect Failed (%d)", conn_ret);
                         }
@@ -255,7 +278,30 @@ void draw_full_ui(const char* mnemonic, const char* btc_address, const char* bal
                     if (init_ret == 0) {
                         int conn_ret = connect_to_ap();
                         if (conn_ret == 0) {
-                            wifi_connected = 1;
+                            int timeout = 60; // 30 seconds
+                            int state = 0;
+                            while (timeout > 0) {
+                                sceNetApctlGetState(&state);
+                                if (state == 4) { // GOT_IP
+                                    wifi_connected = 1;
+                                    break;
+                                }
+                                if (state == 0 && timeout < 55) { // Disconnected / Handshake failed
+                                    conn_ret = -100;
+                                    break;
+                                }
+                                
+                                snprintf(tx_status, sizeof(tx_status), "Connecting to WiFi (Slot 1)... %d sec", timeout / 2);
+                                draw_full_ui(mnemonic, btc_address, balance_str, tx_status, is_testnet);
+                                
+                                sceKernelDelayThread(500 * 1000); // 500ms
+                                timeout--;
+                            }
+                            if (timeout == 0) conn_ret = -200 - state; // Timeout
+                        }
+                        
+                        if (wifi_connected) {
+                            snprintf(tx_status, sizeof(tx_status), "WiFi Connected! (Slot 1)");
                         } else {
                             snprintf(tx_status, sizeof(tx_status), "Error: AP Connect Failed (%d)", conn_ret);
                         }
