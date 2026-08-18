@@ -24,6 +24,11 @@ int init_networking(void) {
     sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
     sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
 
+    sceNetInit(128 * 1024, 42, 4 * 1024, 42, 4 * 1024);
+    sceNetInetInit();
+    sceNetResolverInit();
+    sceNetApctlInit(0x8000, 48);
+
     initialized = 1;
     return 0;
 }
@@ -52,6 +57,10 @@ int connect_to_ap(void) {
 }
 
 void terminate_networking(void) {
+    sceNetApctlTerm();
+    sceNetResolverTerm();
+    sceNetInetTerm();
+    sceNetTerm();
     sceUtilityUnloadNetModule(PSP_NET_MODULE_INET);
     sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
 }
