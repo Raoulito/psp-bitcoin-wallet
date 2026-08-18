@@ -16,6 +16,7 @@
 #include "rand.h"
 #include "network.h"
 #include "http.h"
+#include "tx_builder.h"
 
 PSP_MODULE_INFO("PSP Bitcoin Wallet", 0, 1, 1);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
@@ -55,8 +56,11 @@ int main(int argc, char** argv) {
     char mnemonic[256] = "Press X to generate mnemonic";
     char btc_address[40] = "";
     char balance_str[128] = "Balance: Press [SQUARE] to check";
+    char tx_status[128] = "";
     int oldButtons = 0;
     int wifi_connected = 0;
+    HDNode global_node;
+    int has_node = 0;
 
     while(1) {
         startFrame();
@@ -81,8 +85,11 @@ int main(int argc, char** argv) {
             intraFontSetStyle(font, 0.7f, 0xFF00FFFF, 0, 0, INTRAFONT_ALIGN_LEFT);
             intraFontPrintf(font, 20, 220, "%s", balance_str);
 
+            intraFontSetStyle(font, 0.7f, 0xFFFFAA00, 0, 0, INTRAFONT_ALIGN_LEFT);
+            intraFontPrintf(font, 20, 245, "%s", tx_status);
+
             intraFontSetStyle(font, 0.6f, 0xFFAAAAAA, 0, 0, INTRAFONT_ALIGN_LEFT);
-            intraFontPrintf(font, 20, 255, "[X] Generate     [SQUARE] Check Balance     [START] Exit");
+            intraFontPrintf(font, 20, 265, "[X] Gen   [SQUARE] Bal   [TRIANGLE] Sweep   [START] Exit");
         }
 
         endFrame();
@@ -110,20 +117,20 @@ int main(int argc, char** argv) {
                 mnemonic_to_seed(mnemonic, "", seed, 0);
 
                 // 2. Initialize HD node from seed
-                HDNode node;
-                hdnode_from_seed(seed, 64, SECP256K1_NAME, &node);
+                hdnode_from_seed(seed, 64, SECP256K1_NAME, &global_node);
 
                 // 3. Derive BIP44 path for Bitcoin: m/44'/0'/0'/0/0
-                hdnode_private_ckd(&node, 44 | 0x80000000);
-                hdnode_private_ckd(&node, 0 | 0x80000000);
-                hdnode_private_ckd(&node, 0 | 0x80000000);
-                hdnode_private_ckd(&node, 0);
-                hdnode_private_ckd(&node, 0);
-                hdnode_fill_public_key(&node);
+                hdnode_private_ckd(&global_node, 44 | 0x80000000);
+                hdnode_private_ckd(&global_node, 0 | 0x80000000);
+                hdnode_private_ckd(&global_node, 0 | 0x80000000);
+                hdnode_private_ckd(&global_node, 0);
+                hdnode_private_ckd(&global_node, 0);
+                hdnode_fill_public_key(&global_node);
+                has_node = 1;
 
-                // 4. Generate Legacy P2PKH Bitcoin Address
-                ecdsa_get_address(node.public_key, 0x00, HASHER_SHA2_RIPEMD, HASHER_SHA2D, btc_address, sizeof(btc_address));
+                ecdsa_get_address(global_node.public_key, 0x00, HASHER_SHA2_RIPEMD, HASHER_SHA2D, btc_address, sizeof(btc_address));
                 snprintf(balance_str, sizeof(balance_str), "Balance: Press [SQUARE] to check");
+                tx_status[0] = '\0';
             }
         }
 
@@ -152,6 +159,33 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     snprintf(balance_str, sizeof(balance_str), "Error: WiFi connection failed. Check Profile 1.");
+                }
+            }
+        }
+
+        if (btnDown & PSP_CTRL_TRIANGLE) {
+            if (has_node && strlen(btc_address) > 0) {
+                if (!wifi_connected) {
+                    snprintf(tx_status, sizeof(tx_status), "Connecting to WiFi...");
+                    startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 245, "%s", tx_status); endFrame();
+                    if (init_networking() == 0 && connect_to_ap(1) == 0) wifi_connected = 1;
+                }
+
+                if (wifi_connected) {
+                    snprintf(tx_status, sizeof(tx_status), "Building & Broadcasting Tx (Sweep to self)...");
+                    startFrame(); clearScreen(0xFF1E1E1E); intraFontPrintf(font, 20, 245, "%s", tx_status); endFrame();
+
+                    char txid[70];
+                    int ret = send_bitcoin(&global_node, btc_address, btc_address, 0, txid, sizeof(txid));
+                    if (ret == 0) {
+                        snprintf(tx_status, sizeof(tx_status), "Sent! TXID: %.15s...", txid);
+                    } else if (ret == -5) {
+                        snprintf(tx_status, sizeof(tx_status), "Balance too low for 500 sat fee");
+                    } else {
+                        snprintf(tx_status, sizeof(tx_status), "Error broadcasting (%d)", ret);
+                    }
+                } else {
+                    snprintf(tx_status, sizeof(tx_status), "WiFi failed");
                 }
             }
         }

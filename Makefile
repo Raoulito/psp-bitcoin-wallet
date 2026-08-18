@@ -3,7 +3,7 @@ TARGET_PSP = 1
 TARGET = psp-bitcoin-wallet
 
 # Main project files
-OBJS = main.o graphics.o rand_psp.o network.o http.o
+OBJS = main.o graphics.o rand_psp.o network.o http.o tx_builder.o
 
 # Trezor-crypto objects
 CRYPTO_SRCS = $(wildcard trezor-crypto/*.c)
