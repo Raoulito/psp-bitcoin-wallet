@@ -6,6 +6,7 @@
 #include <pspdisplay.h>
 #include <psputility.h>
 #include <psputility_netmodules.h>
+#include <pspsdk.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -24,10 +25,10 @@ int init_networking(void) {
     sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
     sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
 
-    sceNetInit(128 * 1024, 42, 4 * 1024, 42, 4 * 1024);
-    sceNetInetInit();
-    sceNetResolverInit();
-    sceNetApctlInit(0x8000, 48);
+    int err = pspSdkInetInit();
+    if (err != 0) {
+        return err;
+    }
 
     initialized = 1;
     return 0;

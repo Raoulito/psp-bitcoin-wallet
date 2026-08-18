@@ -40,7 +40,7 @@ ASFLAGS = $(CFLAGS)
 
 LIBDIR =
 LDFLAGS =
-LIBS = -lintrafont -lpspgum -lpspgu -lm -lpspwlan -lpspnet_apctl -lpspnet_resolver -lpsputility -lpspnet_inet -lpspnet -lpsprtc
+LIBS = -lintrafont -lpspgum -lpspgu -lm -lpspwlan -lpspnet_apctl -lpspnet_resolver -lpsputility -lpspnet_inet -lpspnet -lpsprtc -lpspsdk
 
 EXTRA_TARGETS = EBOOT.PBP
 PSP_EBOOT_TITLE = PSP Bitcoin Wallet
