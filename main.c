@@ -12,6 +12,7 @@
 #include "bip39.h"
 #include "bip32.h"
 #include <fcntl.h>
+#include <pspnet_apctl.h>
 #include "address.h"
 #include "curves.h"
 #include "rand.h"
