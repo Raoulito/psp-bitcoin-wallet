@@ -13,6 +13,7 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/error.h"
+#include <pspsysmem.h>
 
 #include "network.h"
 #include "http.h"
@@ -40,6 +41,39 @@ typedef struct {
  * twice over - by the request deadline and by a consecutive-failure count - so
  * these callbacks always terminate.
  */
+/*
+ * Last raw mbedTLS error, kept because the coarse HTTP_ERR_* codes hide the
+ * reason a handshake failed (no shared ciphersuite, out of memory, socket
+ * dropped, and so on all collapse into HTTP_ERR_TLS_HANDSHAKE).
+ */
+static int  g_tls_err = 0;
+static int  g_tls_free_kb = 0;
+
+static void http_set_tls_error(int err)
+{
+    g_tls_err = err;
+    g_tls_free_kb = (int)(sceKernelMaxFreeMemSize() / 1024);
+}
+
+int http_last_tls_error(void)
+{
+    return g_tls_err;
+}
+
+const char *http_tls_error_str(void)
+{
+    static char buf[96];
+
+    if (g_tls_err == 0) return "";
+    mbedtls_strerror(g_tls_err, buf, sizeof(buf));
+    return buf;
+}
+
+int http_last_tls_free_kb(void)
+{
+    return g_tls_free_kb;
+}
+
 static int bio_expired(const psp_bio_ctx *ctx)
 {
     return sceKernelGetSystemTimeWide() > ctx->deadline;
@@ -183,13 +217,13 @@ int https_request(const char *method, const char *host, const char *path,
         const char *pers = "psp_btc_https";
         ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy,
                                     (const unsigned char *)pers, strlen(pers));
-        if (ret != 0) { ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
+        if (ret != 0) { http_set_tls_error(ret); ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
     }
 
     ret = mbedtls_ssl_config_defaults(&conf, MBEDTLS_SSL_IS_CLIENT,
                                       MBEDTLS_SSL_TRANSPORT_STREAM,
                                       MBEDTLS_SSL_PRESET_DEFAULT);
-    if (ret != 0) { ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
+    if (ret != 0) { http_set_tls_error(ret); ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
 
     /* TODO(security): VERIFY_NONE accepts any certificate, so anything on the
        path can impersonate mempool.space. Pin the CA before using mainnet. */
@@ -199,16 +233,20 @@ int https_request(const char *method, const char *host, const char *path,
                                  MBEDTLS_SSL_MINOR_VERSION_3); /* TLS 1.2 */
 
     ret = mbedtls_ssl_setup(&ssl, &conf);
-    if (ret != 0) { ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
+    if (ret != 0) { http_set_tls_error(ret); ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
 
     /* Cloudflare-fronted hosts need SNI or the handshake is rejected. */
     ret = mbedtls_ssl_set_hostname(&ssl, host);
-    if (ret != 0) { ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
+    if (ret != 0) { http_set_tls_error(ret); ret = HTTP_ERR_TLS_SETUP; goto cleanup; }
 
     mbedtls_ssl_set_bio(&ssl, &bio, psp_send, psp_recv, NULL);
 
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+            /* Keep the real code: -7 alone says nothing about why. Note a
+               socket-level failure surfaces here too, since psp_send/psp_recv
+               return MBEDTLS_ERR_NET_* once the retry budget is spent. */
+            http_set_tls_error(ret);
             ret = HTTP_ERR_TLS_HANDSHAKE;
             goto cleanup;
         }
@@ -242,6 +280,7 @@ int https_request(const char *method, const char *host, const char *path,
             ret = mbedtls_ssl_write(&ssl, (const unsigned char *)req + sent, req_len - sent);
             if (ret > 0) { sent += (size_t)ret; continue; }
             if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                http_set_tls_error(ret);
                 ret = HTTP_ERR_WRITE;
                 goto cleanup;
             }

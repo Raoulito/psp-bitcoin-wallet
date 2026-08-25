@@ -388,6 +388,14 @@ int main(int argc, char **argv)
                         snprintf(W.balance_str, sizeof(W.balance_str),
                                  "Balance: %llu sats", (unsigned long long)sats);
                     } else {
+                        int tls = http_last_tls_error();
+                        net_log_reset();
+                        net_log_add("%s (%d)", http_strerror(ret), ret);
+                        if (tls != 0) {
+                            net_log_add("mbedtls -0x%04X free %dKB",
+                                        (unsigned)(-tls), http_last_tls_free_kb());
+                            net_log_add("%s", http_tls_error_str());
+                        }
                         snprintf(W.balance_str, sizeof(W.balance_str),
                                  "Fetch failed: %s (%d)", http_strerror(ret), ret);
                     }
