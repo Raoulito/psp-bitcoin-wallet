@@ -61,6 +61,8 @@ static struct {
        only the final summary survived on screen. */
     char net_log[6][72];
     int  net_log_n;
+    unsigned heartbeat;   /* incremented every rendered frame */
+    unsigned pad;         /* raw button mask last read */
 } W;
 
 static void net_log_reset(void)
@@ -157,6 +159,15 @@ static void draw_full_ui(void)
         intraFontSetStyle(font, 0.6f, 0xFFAAAAAA, 0, 0, INTRAFONT_ALIGN_LEFT);
         intraFontPrintf(font, 20, 258, "[X] Gen   [SQUARE] Bal   [TRIANGLE] Sweep");
         intraFontPrintf(font, 20, 270, "[L/R] Toggle Testnet     [START] Exit");
+
+        /*
+         * Heartbeat. If this number is moving the main loop is alive and any
+         * unresponsiveness is in input handling; if it is frozen the loop is
+         * blocked somewhere. W.pad is the raw button mask, so a stuck value of
+         * 0 while pressing keys means the pad is not being sampled.
+         */
+        intraFontSetStyle(font, 0.6f, 0xFF666666, 0, 0, INTRAFONT_ALIGN_RIGHT);
+        intraFontPrintf(font, 470, 270, "%u %04X", W.heartbeat, W.pad);
     }
     endFrame();
 }
@@ -211,6 +222,11 @@ static int wifi_connect_ui(char *status, size_t status_len)
         draw_full_ui();
         return -1;
     }
+
+    /* Drawn before init: loading the net modules can take a moment and there
+       was previously no visual change until after it returned. */
+    snprintf(status, status_len, "Loading network modules...");
+    draw_full_ui();
 
     rc = init_networking();
     if (rc != 0) {
@@ -293,6 +309,11 @@ int main(int argc, char **argv)
     intraFontInit();
     font = intraFontLoad("flash0:/font/ltn0.pgf", 0);
 
+    /* The pspsdk samples always set these before reading the pad; without them
+       sceCtrlReadBufferPositive() behaviour is not guaranteed. */
+    sceCtrlSetSamplingCycle(0);
+    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
+
     memset(&W, 0, sizeof(W));
     strcpy(W.mnemonic, "Press X to generate mnemonic");
     strcpy(W.balance_str, "Balance: Press [SQUARE] to check");
@@ -304,6 +325,9 @@ int main(int argc, char **argv)
 
         SceCtrlData pad;
         sceCtrlReadBufferPositive(&pad, 1);
+
+        W.heartbeat++;
+        W.pad = pad.Buttons;
 
         int btnDown = pad.Buttons & ~oldButtons;
         oldButtons = pad.Buttons;
@@ -324,10 +348,15 @@ int main(int argc, char **argv)
                     sceIoClose(fd);
                 }
 
+                /* PBKDF2 + 5 EC derivations take seconds on a PSP; show
+                   something first so it does not look like a freeze. */
+                net_log_reset();
+                snprintf(W.balance_str, sizeof(W.balance_str), "Deriving keys...");
+                draw_full_ui();
+
                 derive_wallet();
                 snprintf(W.balance_str, sizeof(W.balance_str), "Balance: Press [SQUARE] to check");
                 W.tx_status[0] = '\0';
-                net_log_reset();   /* show the mnemonic again */
             }
         }
 
