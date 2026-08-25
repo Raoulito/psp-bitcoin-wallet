@@ -56,10 +56,11 @@ static int  g_tls_free_kb = 0;
  * only way to know which one is to see what mbedTLS was doing right before it.
  * Keeping just the tail is enough: the failure point is always last.
  */
-#define TLS_DBG_LINES 4
+#define TLS_DBG_LINES 6
 
 static char g_dbg[TLS_DBG_LINES][72];
-static int  g_dbg_n = 0;     /* total messages seen */
+static int  g_dbg_n = 0;      /* total messages seen */
+static int  g_dbg_frozen = 0; /* stop recording once the failure is captured */
 
 static void psp_tls_dbg(void *ctx, int level, const char *file, int line, const char *str)
 {
@@ -69,6 +70,11 @@ static void psp_tls_dbg(void *ctx, int level, const char *file, int line, const 
 
     (void)ctx;
     (void)level;
+
+    /* Frozen at the point of failure. Otherwise mbedtls_ssl_close_notify() and
+       mbedtls_ssl_free() in our cleanup path immediately overwrite the ring with
+       teardown chatter and the handshake context is lost. */
+    if (g_dbg_frozen) return;
 
     base = strrchr(file, '/');
     base = base ? base + 1 : file;
@@ -96,6 +102,7 @@ const char *http_tls_debug_line(int i)
 
 static void http_set_tls_error(int err)
 {
+    g_dbg_frozen = 1;
     g_tls_err = err;
     g_tls_free_kb = (int)(sceKernelMaxFreeMemSize() / 1024);
 }
@@ -285,6 +292,7 @@ int https_request(const char *method, const char *host, const char *path,
      * which is what localises an INTERNAL_ERROR.
      */
     g_dbg_n = 0;
+    g_dbg_frozen = 0;
     mbedtls_debug_set_threshold(2);
     mbedtls_ssl_conf_dbg(&conf, psp_tls_dbg, NULL);
     mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3,

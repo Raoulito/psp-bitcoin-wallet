@@ -59,7 +59,7 @@ static struct {
     /* Persistent WiFi diagnostics. Each connection attempt appends one line;
        without this every slot's outcome was overwritten by the next one and
        only the final summary survived on screen. */
-    char net_log[6][72];
+    char net_log[8][72];
     int  net_log_n;
     unsigned heartbeat;   /* incremented every rendered frame */
     unsigned pad;         /* raw button mask last read */
@@ -120,7 +120,7 @@ static void draw_full_ui(void)
         intraFontSetStyle(font, 0.6f, 0xFFDDDDDD, 0, 0, INTRAFONT_ALIGN_LEFT);
         if (W.net_log_n) {
             for (int i = 0; i < W.net_log_n; i++) {
-                intraFontPrintf(font, 20, 96 + i * 10, "%s", W.net_log[i]);
+                intraFontPrintf(font, 20, 88 + i * 9, "%s", W.net_log[i]);
             }
         } else {
             char formatted_mnemonic[288] = "";
