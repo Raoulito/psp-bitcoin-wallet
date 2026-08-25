@@ -21,13 +21,7 @@
 #include "http.h"
 #include "tx_builder.h"
 
-/*
- * Attribute 0x0800 (with BUILD_PRX=1 in the Makefile) is what CMFileManager-PSP
- * uses to get an elevated single-EBOOT homebrew on CFW. A plain user module
- * cannot reach the netconf dialog or the netparam backend: both return
- * 0x8002013A LIBRARY_NOT_YET_LINKED. CFW only.
- */
-PSP_MODULE_INFO("PSP Bitcoin Wallet", 0x0800, 1, 1);
+PSP_MODULE_INFO("PSP Bitcoin Wallet", 0, 1, 1);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 
 /*
@@ -187,20 +181,26 @@ static void derive_wallet(void)
                       HASHER_SHA2_RIPEMD, HASHER_SHA2D,
                       W.btc_address, sizeof(W.btc_address));
 }
-
 /*
- * Brings WiFi up via the firmware connection dialog and returns 0 once an IP is
- * assigned, otherwise writes the reason into status.
+ * Brings WiFi up the way pspsdk's samples/net/simple does, which is verified
+ * working on this console: connect to the saved config slot, then poll state
+ * until GOT_IP.
  *
- * We deliberately do not drive sceNetApctlConnect() ourselves - see network.h.
- * Slot-by-slot connection attempts always failed with 0x80410208 because apctl
- * cannot read the saved profile from a homebrew context.
+ * CRITICAL: apctl EVENT_ERROR must not abort this. A WPA association passes
+ * through KEY_EXCHANGE (state 6) and raises transient errors such as
+ * 0x80410208 before recovering. Earlier versions bailed out there and killed
+ * connections that were succeeding. Errors are logged, never acted on.
  */
+#define NET_CONFIG_SLOT 1
+#define CONNECT_TICKS   90    /* 90 * 500ms = 45s */
+
 static int wifi_connect_ui(char *status, size_t status_len)
 {
     char line[68];
     char ip[24] = "?";
     int rc;
+    int t;
+    int last = -1;
 
     if (net_is_connected()) return 0;
 
@@ -220,26 +220,45 @@ static int wifi_connect_ui(char *status, size_t status_len)
         return -1;
     }
 
-    snprintf(status, status_len, "Choose your connection...");
+    snprintf(status, status_len, "Connecting to WiFi...");
     draw_full_ui();
 
-    /* Hands control to the firmware picker; returns after it is dismissed. */
-    rc = net_connect_dialog();
-
-    if (rc == 0) {
-        net_get_ip(ip, sizeof(ip));
-        net_log_reset();                /* success: restore the mnemonic view */
-        snprintf(status, status_len, "WiFi connected (%s)", ip);
+    rc = net_connect(NET_CONFIG_SLOT);
+    if (rc != 0) {
+        net_log_add("init: %s", net_init_detail());
+        net_log_add("apctlConnect=0x%08X", (unsigned)rc);
+        snprintf(status, status_len, "Connect failed - see net log");
         draw_full_ui();
-        return 0;
+        return -1;
+    }
+
+    for (t = 0; t < CONNECT_TICKS; t++) {
+        int state = net_state();
+
+        if (state == PSP_NET_APCTL_STATE_GOT_IP) {
+            net_get_ip(ip, sizeof(ip));
+            net_log_reset();               /* success: restore mnemonic view */
+            snprintf(status, status_len, "WiFi connected (%s)", ip);
+            draw_full_ui();
+            return 0;
+        }
+
+        if (state != last) {
+            last = state;
+            snprintf(status, status_len, "%s... %ds",
+                     net_state_name(state), (CONNECT_TICKS - t) / 2);
+            draw_full_ui();
+        }
+
+        sceKernelDelayThread(500 * 1000);
     }
 
     net_log_add("init: %s", net_init_detail());
-    net_log_add("state: %s", net_state_name(net_state()));
+    net_log_add("timeout in state %d (%s)", last, net_state_name(last));
     if (net_event_trace(line, sizeof(line)) == 0 && line[0]) net_log_add("%s", line);
     if (net_ap_info(line, sizeof(line)) == 0 && line[0]) net_log_add("%s", line);
 
-    snprintf(status, status_len, "Not connected - see net log");
+    snprintf(status, status_len, "WiFi timeout - see net log");
     draw_full_ui();
     return -1;
 }
