@@ -392,9 +392,14 @@ int main(int argc, char **argv)
                         net_log_reset();
                         net_log_add("%s (%d)", http_strerror(ret), ret);
                         if (tls != 0) {
+                            int i;
                             net_log_add("mbedtls -0x%04X free %dKB",
                                         (unsigned)(-tls), http_last_tls_free_kb());
-                            net_log_add("%s", http_tls_error_str());
+                            /* Tail of the handshake trace: the last line before
+                               the failure names the site that raised it. */
+                            for (i = 0; i < http_tls_debug_count(); i++) {
+                                net_log_add("%s", http_tls_debug_line(i));
+                            }
                         }
                         snprintf(W.balance_str, sizeof(W.balance_str),
                                  "Fetch failed: %s (%d)", http_strerror(ret), ret);

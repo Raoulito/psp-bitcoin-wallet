@@ -13,6 +13,7 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/error.h"
+#include "mbedtls/debug.h"
 #include <pspsysmem.h>
 
 #include "network.h"
@@ -48,6 +49,50 @@ typedef struct {
  */
 static int  g_tls_err = 0;
 static int  g_tls_free_kb = 0;
+
+/*
+ * Ring of the most recent mbedTLS debug messages. MBEDTLS_ERR_SSL_INTERNAL_ERROR
+ * is a catch-all returned from a dozen places in the client handshake, so the
+ * only way to know which one is to see what mbedTLS was doing right before it.
+ * Keeping just the tail is enough: the failure point is always last.
+ */
+#define TLS_DBG_LINES 4
+
+static char g_dbg[TLS_DBG_LINES][72];
+static int  g_dbg_n = 0;     /* total messages seen */
+
+static void psp_tls_dbg(void *ctx, int level, const char *file, int line, const char *str)
+{
+    const char *base;
+    char *nl;
+    int slot;
+
+    (void)ctx;
+    (void)level;
+
+    base = strrchr(file, '/');
+    base = base ? base + 1 : file;
+
+    slot = g_dbg_n % TLS_DBG_LINES;
+    snprintf(g_dbg[slot], sizeof(g_dbg[0]), "%s:%d %s", base, line, str);
+    nl = strchr(g_dbg[slot], '\n');
+    if (nl) *nl = '\0';
+    g_dbg_n++;
+}
+
+/* Oldest-to-newest of the retained tail. i in [0, http_tls_debug_count). */
+int http_tls_debug_count(void)
+{
+    return (g_dbg_n < TLS_DBG_LINES) ? g_dbg_n : TLS_DBG_LINES;
+}
+
+const char *http_tls_debug_line(int i)
+{
+    int count = http_tls_debug_count();
+    int first = (g_dbg_n < TLS_DBG_LINES) ? 0 : (g_dbg_n % TLS_DBG_LINES);
+    if (i < 0 || i >= count) return "";
+    return g_dbg[(first + i) % TLS_DBG_LINES];
+}
 
 static void http_set_tls_error(int err)
 {
@@ -229,6 +274,19 @@ int https_request(const char *method, const char *host, const char *path,
        path can impersonate mempool.space. Pin the CA before using mainnet. */
     mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_NONE);
     mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+
+    /*
+     * Diagnostics: retain the tail of the handshake trace.
+     *
+     * Threshold 2 deliberately, not 3 or 4: every message costs an snprintf on a
+     * 333MHz CPU, and enough of them would push the handshake past the request
+     * deadline and change the failure we are trying to observe. Level 1 carries
+     * the "should never happen" errors and level 2 the state/curve messages,
+     * which is what localises an INTERNAL_ERROR.
+     */
+    g_dbg_n = 0;
+    mbedtls_debug_set_threshold(2);
+    mbedtls_ssl_conf_dbg(&conf, psp_tls_dbg, NULL);
     mbedtls_ssl_conf_min_version(&conf, MBEDTLS_SSL_MAJOR_VERSION_3,
                                  MBEDTLS_SSL_MINOR_VERSION_3); /* TLS 1.2 */
 

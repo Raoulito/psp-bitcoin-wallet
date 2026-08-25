@@ -33,6 +33,10 @@ const char *http_tls_error_str(void);
 /* Free user memory when that error was recorded, to catch allocation failures. */
 int http_last_tls_free_kb(void);
 
+/* Tail of the mbedTLS handshake trace, oldest first, for locating failures. */
+int http_tls_debug_count(void);
+const char *http_tls_debug_line(int i);
+
 /* Generic HTTPS request using mbedTLS over PSP sockets. 0 on success. */
 int https_request(const char *method, const char *host, const char *path,
                   const char *body, char *response_buf, size_t response_max);
