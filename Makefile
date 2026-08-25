@@ -38,6 +38,15 @@ CFLAGS = -O2 -G0 -Wall -Wno-unused-function -D_PSP_ \
 CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
 ASFLAGS = $(CFLAGS)
 
+# Build a relocatable PRX rather than a static ELF.
+#
+# Required for the 0x0800 module attribute in main.c to have any effect: a static
+# ELF is loaded as a plain user module and its attribute field is ignored, which
+# is why sceUtilityNetconfInitStart() and the sceUtility*NetParam calls returned
+# 0x8002013A (LIBRARY_NOT_YET_LINKED). CMFileManager-PSP ships a single EBOOT
+# built this way (BUILD_PRX=1 + attribute 0x800).
+BUILD_PRX = 1
+
 LIBDIR =
 LDFLAGS =
 # Do NOT repeat -lpspnet / -lpspnet_apctl / -lpspdebug / -lpspdisplay / -lpspge /

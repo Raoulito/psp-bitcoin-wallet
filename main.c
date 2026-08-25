@@ -21,7 +21,13 @@
 #include "http.h"
 #include "tx_builder.h"
 
-PSP_MODULE_INFO("PSP Bitcoin Wallet", 0, 1, 1);
+/*
+ * Attribute 0x0800 (with BUILD_PRX=1 in the Makefile) is what CMFileManager-PSP
+ * uses to get an elevated single-EBOOT homebrew on CFW. A plain user module
+ * cannot reach the netconf dialog or the netparam backend: both return
+ * 0x8002013A LIBRARY_NOT_YET_LINKED. CFW only.
+ */
+PSP_MODULE_INFO("PSP Bitcoin Wallet", 0x0800, 1, 1);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
 
 /*

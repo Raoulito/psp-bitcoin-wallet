@@ -9,6 +9,7 @@
 #include <pspdisplay.h>
 #include <psputility.h>
 #include <psputility_netmodules.h>
+#include <psputility_modules.h>
 #include <psputility_netconf.h>
 #include <psputility_sysparam.h>
 #include <string.h>
@@ -62,6 +63,53 @@ int net_wlan_switch_on(void)
     return sceWlanGetSwitchState() == 1;
 }
 
+/*
+ * 0 = not loaded, 1 = loaded via sceUtilityLoadModule (fw 2.0+ API),
+ * 2 = loaded via sceUtilityLoadNetModule (1.5-era API).
+ */
+static int g_module_api = 0;
+
+static int module_ok(int rc, unsigned already)
+{
+    return (rc >= 0) || ((unsigned)rc == already);
+}
+
+/*
+ * sceUtilityLoadNetModule() is the 1.5-era call. On 6.61 it brings up enough for
+ * sockets, but sceUtilityNetconfInitStart() and the sceUtility*NetParam calls
+ * still fail with 0x8002013A (LIBRARY_NOT_YET_LINKED), so prefer the 2.0+
+ * sceUtilityLoadModule() API and only fall back if it is unavailable.
+ */
+static int load_net_modules(int free_kb)
+{
+    int rc_common;
+    int rc_inet;
+
+    rc_common = sceUtilityLoadModule(PSP_MODULE_NET_COMMON);
+    rc_inet   = sceUtilityLoadModule(PSP_MODULE_NET_INET);
+
+    if (module_ok(rc_common, SCE_ERROR_MODULE_ALREADY_LOADED) &&
+        module_ok(rc_inet, SCE_ERROR_MODULE_ALREADY_LOADED)) {
+        g_module_api = 1;
+        snprintf(g_init_detail, sizeof(g_init_detail), "mod2 ok free %dKB", free_kb);
+        return 0;
+    }
+
+    rc_common = sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
+    rc_inet   = sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
+
+    if (module_ok(rc_common, SCE_ERROR_NET_MODULE_NOT_LOADED) &&
+        module_ok(rc_inet, SCE_ERROR_NET_MODULE_NOT_LOADED)) {
+        g_module_api = 2;
+        snprintf(g_init_detail, sizeof(g_init_detail), "mod1 ok free %dKB", free_kb);
+        return 0;
+    }
+
+    snprintf(g_init_detail, sizeof(g_init_detail), "mod c=%08X i=%08X free %dKB",
+             (unsigned)rc_common, (unsigned)rc_inet, free_kb);
+    return rc_common < 0 ? rc_common : rc_inet;
+}
+
 int init_networking(void)
 {
     int rc;
@@ -77,18 +125,8 @@ int init_networking(void)
     /* Keep the console awake while the radio is up. */
     scePowerLock(0);
 
-    rc = sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
-    if (rc < 0) {
-        snprintf(g_init_detail, sizeof(g_init_detail),
-                 "COMMON 0x%08X free %dKB", (unsigned)rc, free_kb);
-        goto fail;
-    }
-    rc = sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
-    if (rc < 0) {
-        snprintf(g_init_detail, sizeof(g_init_detail),
-                 "INET 0x%08X free %dKB", (unsigned)rc, free_kb);
-        goto fail;
-    }
+    rc = load_net_modules(free_kb);
+    if (rc < 0) goto fail;
 
     /*
      * Initialised by hand rather than with pspSdkInetInit(), which uses
@@ -119,8 +157,8 @@ int init_networking(void)
 
     g_handler_id = sceNetApctlAddHandler(apctl_handler, NULL);
 
-    snprintf(g_init_detail, sizeof(g_init_detail), "ok, free %dKB",
-             (int)(sceKernelMaxFreeMemSize() / 1024));
+    snprintf(g_init_detail, sizeof(g_init_detail), "ok mod%d free %dKB",
+             g_module_api, (int)(sceKernelMaxFreeMemSize() / 1024));
     g_initialized = 1;
     return 0;
 
@@ -170,7 +208,8 @@ int net_connect_dialog(void)
 
     rc = sceUtilityNetconfInitStart(&data);
     if (rc != 0) {
-        snprintf(g_init_detail, sizeof(g_init_detail), "netconf init 0x%08X", (unsigned)rc);
+        snprintf(g_init_detail, sizeof(g_init_detail), "netconf 0x%08X (mod%d)",
+                 (unsigned)rc, g_module_api);
         return rc;
     }
 
@@ -349,8 +388,14 @@ void terminate_networking(void)
     sceNetResolverTerm();
     sceNetInetTerm();
     sceNetTerm();
-    sceUtilityUnloadNetModule(PSP_NET_MODULE_INET);
-    sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
+    if (g_module_api == 1) {
+        sceUtilityUnloadModule(PSP_MODULE_NET_INET);
+        sceUtilityUnloadModule(PSP_MODULE_NET_COMMON);
+    } else if (g_module_api == 2) {
+        sceUtilityUnloadNetModule(PSP_NET_MODULE_INET);
+        sceUtilityUnloadNetModule(PSP_NET_MODULE_COMMON);
+    }
+    g_module_api = 0;
     scePowerUnlock(0);
 
     g_initialized = 0;
