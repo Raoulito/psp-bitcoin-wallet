@@ -1,5 +1,6 @@
 #include <pspkernel.h>
 #include <pspnet_resolver.h>
+#include <pspnet_inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -26,6 +27,21 @@
 /* Guards against a hot spin when the socket fails immediately every time. */
 #define BIO_MAX_FAIL_STREAK   64
 
+/*
+ * Sockets are driven through sceNetInet* directly rather than the newlib/cglue
+ * BSD wrappers.
+ *
+ * cglue's send() maps a newlib fd through __descriptormap to a descriptor in
+ * __descriptor_data_pool and then calls sceNetInetSend. Through that path a
+ * 304-byte write returned 144706348 (0x08A00B2C) - an address inside
+ * __descriptor_data_pool, not a byte count - and mbedTLS correctly rejected a
+ * return larger than the buffer with MBEDTLS_ERR_SSL_INTERNAL_ERROR (-0x6C00).
+ * Calling the firmware API directly removes that translation layer.
+ *
+ * NOTE: pspsdk declares sceNetInetSend/Recv as returning size_t (unsigned),
+ * which is wrong - they return negative values on error - so every result is
+ * cast to int before being tested.
+ */
 typedef struct {
     int fd;
     SceInt64 deadline; /* sceKernelGetSystemTimeWide() value after which we bail */
@@ -142,7 +158,7 @@ static int bio_retry_or_fail(psp_bio_ctx *ctx, int want, int fail)
 static int psp_send(void *p, const unsigned char *buf, size_t len)
 {
     psp_bio_ctx *ctx = (psp_bio_ctx *)p;
-    int ret = send(ctx->fd, buf, len, 0);
+    int ret = (int)sceNetInetSend(ctx->fd, buf, len, 0);
 
     if (ret >= 0) {
         ctx->fail_streak = 0;
@@ -154,7 +170,7 @@ static int psp_send(void *p, const unsigned char *buf, size_t len)
 static int psp_recv(void *p, unsigned char *buf, size_t len)
 {
     psp_bio_ctx *ctx = (psp_bio_ctx *)p;
-    int ret = recv(ctx->fd, buf, len, 0);
+    int ret = (int)sceNetInetRecv(ctx->fd, buf, len, 0);
 
     /* 0 is an orderly close; mbedtls turns it into MBEDTLS_ERR_SSL_CONN_EOF. */
     if (ret >= 0) {
@@ -240,22 +256,22 @@ int https_request(const char *method, const char *host, const char *path,
     sceNetResolverDelete(rid);
 
     /* 2. TCP */
-    bio.fd = socket(AF_INET, SOCK_STREAM, 0);
+    bio.fd = sceNetInetSocket(AF_INET, SOCK_STREAM, 0);
     if (bio.fd < 0) return HTTP_ERR_SOCKET;
 
     /* Without these a stalled AP blocks the render loop indefinitely. */
     tv.tv_sec = HTTP_IO_TIMEOUT_SEC;
     tv.tv_usec = 0;
-    setsockopt(bio.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(bio.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    sceNetInetSetsockopt(bio.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    sceNetInetSetsockopt(bio.fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
     memset(&dest, 0, sizeof(dest));
     dest.sin_family = AF_INET;
     dest.sin_port = htons(443);
     dest.sin_addr = addr;
 
-    if (connect(bio.fd, (struct sockaddr *)&dest, sizeof(dest)) < 0) {
-        close(bio.fd);
+    if (sceNetInetConnect(bio.fd, (struct sockaddr *)&dest, sizeof(dest)) < 0) {
+        sceNetInetClose(bio.fd);
         return HTTP_ERR_CONNECT;
     }
 
@@ -386,7 +402,7 @@ cleanup:
     mbedtls_ssl_config_free(&conf);
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
-    if (bio.fd >= 0) close(bio.fd);
+    if (bio.fd >= 0) sceNetInetClose(bio.fd);
 
     return ret;
 }
