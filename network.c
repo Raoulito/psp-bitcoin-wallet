@@ -17,6 +17,7 @@ static int  g_initialized = 0;
 static int  g_handler_id = -1;
 static int  g_apctl_error = 0;
 static char g_init_detail[96] = "";
+static int  g_free_kb_at_init = 0;
 
 /*
  * Diagnostics only.
@@ -60,45 +61,76 @@ int net_wlan_switch_on(void)
     return sceWlanGetSwitchState() == 1;
 }
 
+const char *net_init_step_name(int step)
+{
+    switch (step) {
+        case 0: return "sceUtilityLoadNetModule(COMMON)";
+        case 1: return "sceUtilityLoadNetModule(INET)";
+        case 2: return "sceNetInit";
+        case 3: return "sceNetInetInit";
+        case 4: return "sceNetResolverInit";
+        case 5: return "sceNetApctlInit";
+        case 6: return "sceNetApctlAddHandler";
+        default: return "done";
+    }
+}
+
+int net_init_step(int step)
+{
+    int rc = 0;
+
+    if (g_initialized) return 1;
+
+    switch (step) {
+        case 0:
+            g_free_kb_at_init = (int)(sceKernelMaxFreeMemSize() / 1024);
+            rc = sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
+            break;
+        case 1:
+            rc = sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
+            break;
+        case 2:
+            /* Same parameters pspSdkInetInit() and the working sample use. */
+            rc = sceNetInit(128 * 1024, 42, 4 * 1024, 42, 4 * 1024);
+            break;
+        case 3:
+            rc = sceNetInetInit();
+            break;
+        case 4:
+            /* Needed for DNS; the FTP-only reference app skips this. */
+            rc = sceNetResolverInit();
+            break;
+        case 5:
+            rc = sceNetApctlInit(0x8000, 48);
+            break;
+        case 6:
+            g_handler_id = sceNetApctlAddHandler(apctl_handler, NULL);
+            snprintf(g_init_detail, sizeof(g_init_detail), "ok free %dKB",
+                     g_free_kb_at_init);
+            g_initialized = 1;
+            return 1;
+        default:
+            return 1;
+    }
+
+    if (rc < 0) {
+        snprintf(g_init_detail, sizeof(g_init_detail), "%s = 0x%08X free %dKB",
+                 net_init_step_name(step), (unsigned)rc, g_free_kb_at_init);
+        return rc;
+    }
+    return 0;
+}
+
 int init_networking(void)
 {
+    int step;
     int rc;
-    int free_kb;
 
-    if (g_initialized) return 0;
-
-    /* Module loads fail when PSP_HEAP_SIZE_KB has claimed most of the user
-       partition, so record the headroom before touching anything. */
-    free_kb = (int)(sceKernelMaxFreeMemSize() / 1024);
-
-    rc = sceUtilityLoadNetModule(PSP_NET_MODULE_COMMON);
-    if (rc < 0) {
-        snprintf(g_init_detail, sizeof(g_init_detail),
-                 "COMMON 0x%08X free %dKB", (unsigned)rc, free_kb);
-        return rc;
+    for (step = 0; step <= 6; step++) {
+        rc = net_init_step(step);
+        if (rc < 0) return rc;
+        if (rc == 1) return 0;
     }
-    rc = sceUtilityLoadNetModule(PSP_NET_MODULE_INET);
-    if (rc < 0) {
-        snprintf(g_init_detail, sizeof(g_init_detail),
-                 "INET 0x%08X free %dKB", (unsigned)rc, free_kb);
-        return rc;
-    }
-
-    /* sceNetInit + sceNetInetInit + sceNetResolverInit + sceNetApctlInit with
-       the parameters the working sample uses. The resolver is included, which
-       we need for DNS. */
-    rc = pspSdkInetInit();
-    if (rc != 0) {
-        snprintf(g_init_detail, sizeof(g_init_detail),
-                 "inetInit 0x%08X free %dKB", (unsigned)rc, free_kb);
-        return rc;
-    }
-
-    g_handler_id = sceNetApctlAddHandler(apctl_handler, NULL);
-
-    snprintf(g_init_detail, sizeof(g_init_detail), "ok free %dKB",
-             (int)(sceKernelMaxFreeMemSize() / 1024));
-    g_initialized = 1;
     return 0;
 }
 

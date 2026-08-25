@@ -223,17 +223,23 @@ static int wifi_connect_ui(char *status, size_t status_len)
         return -1;
     }
 
-    /* Drawn before init: loading the net modules can take a moment and there
-       was previously no visual change until after it returned. */
-    snprintf(status, status_len, "Loading network modules...");
-    draw_full_ui();
-
-    rc = init_networking();
-    if (rc != 0) {
-        net_log_add("init failed: %s", net_init_detail());
-        snprintf(status, status_len, "Net init failed: %s", net_init_detail());
+    /*
+     * Driven one step at a time, drawing the name of each call BEFORE making it.
+     * These calls can block, and running them back to back left no way to tell
+     * which one had wedged. Whatever is on screen names the offending call.
+     */
+    for (t = 0; t <= 6; t++) {
+        snprintf(status, status_len, "init: %s", net_init_step_name(t));
         draw_full_ui();
-        return -1;
+
+        rc = net_init_step(t);
+        if (rc < 0) {
+            net_log_add("%s", net_init_detail());
+            snprintf(status, status_len, "Net init failed - see net log");
+            draw_full_ui();
+            return -1;
+        }
+        if (rc == 1) break;
     }
 
     snprintf(status, status_len, "Connecting to WiFi...");

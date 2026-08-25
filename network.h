@@ -28,6 +28,19 @@ int net_wlan_switch_on(void);
 /* Loads net modules and initialises net/inet/resolver/apctl. 0 on success. */
 int init_networking(void);
 
+/*
+ * Step-wise variant of init_networking().
+ *
+ * Each of these calls can block, and previously they ran back to back with no
+ * chance to redraw, so a hang was indistinguishable between them. The caller
+ * draws net_init_step_name(step) *before* invoking net_init_step(step), which
+ * means whatever is on screen when it wedges names the offending call.
+ *
+ * Returns 0 to continue, 1 when initialisation is complete, < 0 on error.
+ */
+const char *net_init_step_name(int step);
+int net_init_step(int step);
+
 /* Where the last init_networking() call got to, for on-screen diagnostics. */
 const char *net_init_detail(void);
 
